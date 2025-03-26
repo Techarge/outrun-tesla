@@ -45,6 +45,21 @@
   let smokeParticles: THREE.Mesh[] = [];
   let lastSmokeTime = 0;
   let smokeInterval = 0.05; // Seconds between smoke particles
+  let smokeActive = false;
+  let smokeStartTime = 0;
+  let smokeDuration = 0; // Random duration up to 10 seconds
+  
+  // Sun
+  let sun: THREE.Mesh | null = null;
+  let sunLight: THREE.DirectionalLight | null = null;
+  let sunVisible = false;
+  
+  // Lightning effect
+  let lightningActive = false;
+  let lightningTime = 0;
+  let lightningDuration = 0.5; // Duration of lightning effect in seconds
+  let lightningBolt: THREE.Group | null = null;
+  let lightningFlash: THREE.DirectionalLight | null = null;
   
   // Colors
   const skyColor = 0x87CEEB; // Light blue sky
@@ -162,6 +177,20 @@
     
     // Update score
     updateScore(deltaTime);
+    
+    // Handle smoke effect
+    if (smokeActive && elapsedTime - lastSmokeTime > smokeInterval) {
+      createSmokeParticle();
+      lastSmokeTime = elapsedTime;
+    }
+    
+    // Update existing smoke particles
+    updateSmokeParticles(deltaTime);
+    
+    // Handle lightning effect
+    if (lightningActive) {
+      updateLightningEffect(deltaTime);
+    }
     
     // Move obstacles and road
     const moveDistance = speed * deltaTime;
@@ -431,6 +460,30 @@
       case ' ':
         speed = Math.max(0, speed - brakeForce * 5);
         break;
+      case 's':
+      case 'S':
+        smokeActive = true;
+        smokeStartTime = elapsedTime;
+        smokeDuration = Math.random() * 10; // Random duration up to 10 seconds
+        break;
+      case 'f':
+      case 'F':
+        if (!sunVisible) {
+          createSun();
+          sunVisible = true;
+        } else {
+          removeSun();
+          sunVisible = false;
+        }
+        break;
+      case 'l':
+      case 'L':
+        if (!lightningActive) {
+          createLightningEffect();
+          lightningActive = true;
+          lightningTime = 0;
+        }
+        break;
     }
   }
   
@@ -660,6 +713,196 @@
     scene.add(sky);
   }
   
+  function createSun() {
+    // Create the sun sphere
+    const sunGeometry = new THREE.SphereGeometry(20, 32, 32);
+    const sunMaterial = new THREE.MeshBasicMaterial({
+      color: 0xffdd00,
+      emissive: 0xffdd00,
+      emissiveIntensity: 1
+    });
+    
+    sun = new THREE.Mesh(sunGeometry, sunMaterial);
+    sun.position.set(200, 150, 300); // Position in the sky
+    scene.add(sun);
+    
+    // Add a directional light to simulate sunlight
+    sunLight = new THREE.DirectionalLight(0xffffcc, 1.5);
+    sunLight.position.copy(sun.position);
+    sunLight.castShadow = true;
+    sunLight.shadow.mapSize.width = 2048;
+    sunLight.shadow.mapSize.height = 2048;
+    scene.add(sunLight);
+    
+    // Add lens flare effect (simplified with a small glow sphere)
+    const glowGeometry = new THREE.SphereGeometry(25, 32, 32);
+    const glowMaterial = new THREE.MeshBasicMaterial({
+      color: 0xffffaa,
+      transparent: true,
+      opacity: 0.3
+    });
+    
+    const glow = new THREE.Mesh(glowGeometry, glowMaterial);
+    glow.position.copy(sun.position);
+    scene.add(glow);
+  }
+  
+  function removeSun() {
+    // Remove sun and its light
+    if (sun) {
+      scene.remove(sun);
+      sun = null;
+    }
+    
+    if (sunLight) {
+      scene.remove(sunLight);
+      sunLight = null;
+    }
+  }
+  
+  function createSmokeParticle() {
+    // Create a smoke particle at the car's exhaust position
+    const size = Math.random() * 0.5 + 0.5;
+    const smokeGeometry = new THREE.SphereGeometry(size, 8, 8);
+    const smokeMaterial = new THREE.MeshBasicMaterial({
+      color: 0xdddddd,
+      transparent: true,
+      opacity: 0.7
+    });
+    
+    const smoke = new THREE.Mesh(smokeGeometry, smokeMaterial);
+    
+    // Position behind the car
+    smoke.position.set(
+      player.position.x + (Math.random() * 2 - 1), // Random spread
+      player.position.y + 0.5 + (Math.random() * 0.5), // Slightly above exhaust
+      player.position.z - 3 // Behind the car
+    );
+    
+    // Add to scene and particles array
+    scene.add(smoke);
+    smokeParticles.push(smoke);
+    
+    // Limit the number of particles to prevent performance issues
+    if (smokeParticles.length > 50) {
+      const oldestParticle = smokeParticles.shift();
+      if (oldestParticle) scene.remove(oldestParticle);
+    }
+  }
+  
+  function updateSmokeParticles(deltaTime: number) {
+    // Update each smoke particle
+    for (let i = smokeParticles.length - 1; i >= 0; i--) {
+      const particle = smokeParticles[i];
+      
+      // Move particle
+      particle.position.y += deltaTime * 2; // Rise up
+      particle.position.x += (Math.random() - 0.5) * deltaTime; // Random drift
+      particle.scale.multiplyScalar(1 + deltaTime * 0.5); // Grow larger
+      
+      // Fade out
+      if (particle.material instanceof THREE.MeshBasicMaterial) {
+        particle.material.opacity -= deltaTime * 0.8;
+        
+        // Remove if fully transparent
+        if (particle.material.opacity <= 0) {
+          scene.remove(particle);
+          smokeParticles.splice(i, 1);
+        }
+      }
+    }
+    
+    // Check if smoke effect has been active for longer than the random duration
+    if (smokeActive && elapsedTime - smokeStartTime > smokeDuration) {
+      smokeActive = false;
+    }
+  }
+  
+  function createLightningEffect() {
+    // Create lightning bolt
+    lightningBolt = new THREE.Group();
+    
+    // Create a zigzag pattern for the lightning
+    const points = [];
+    const segments = 8;
+    const height = 100;
+    
+    // Start from above the scene
+    points.push(new THREE.Vector3(player.position.x + (Math.random() * 40 - 20), height, player.position.z + (Math.random() * 40 - 20)));
+    
+    // Create zigzag pattern down to ground
+    for (let i = 1; i < segments; i++) {
+      const t = i / segments;
+      const x = points[0].x + (Math.random() * 10 - 5) * (1 - t);
+      const y = height * (1 - t);
+      const z = points[0].z + (Math.random() * 10 - 5) * (1 - t);
+      points.push(new THREE.Vector3(x, y, z));
+    }
+    
+    // End at ground level
+    points.push(new THREE.Vector3(points[points.length - 1].x, 0, points[points.length - 1].z));
+    
+    // Create lightning segments
+    for (let i = 0; i < points.length - 1; i++) {
+      const start = points[i];
+      const end = points[i + 1];
+      
+      // Calculate direction and length
+      const direction = new THREE.Vector3().subVectors(end, start);
+      const length = direction.length();
+      
+      // Create cylinder for this segment
+      const geometry = new THREE.CylinderGeometry(0.2, 0.2, length, 6);
+      const material = new THREE.MeshBasicMaterial({ 
+        color: 0x80f0ff,
+        emissive: 0x80f0ff,
+        emissiveIntensity: 1
+      });
+      
+      const segment = new THREE.Mesh(geometry, material);
+      
+      // Position and rotate to connect points
+      segment.position.copy(start);
+      segment.position.add(direction.multiplyScalar(0.5));
+      segment.lookAt(end);
+      segment.rotateX(Math.PI / 2);
+      
+      lightningBolt.add(segment);
+    }
+    
+    scene.add(lightningBolt);
+    
+    // Create flash light
+    lightningFlash = new THREE.DirectionalLight(0xffffff, 2);
+    lightningFlash.position.set(0, 50, 0);
+    scene.add(lightningFlash);
+  }
+  
+  function updateLightningEffect(deltaTime: number) {
+    lightningTime += deltaTime;
+    
+    // Flash intensity based on time
+    if (lightningFlash) {
+      const flashIntensity = Math.max(0, 2 * (1 - lightningTime / lightningDuration));
+      lightningFlash.intensity = flashIntensity * (Math.random() * 0.5 + 0.5); // Flicker effect
+    }
+    
+    // Remove lightning after duration
+    if (lightningTime >= lightningDuration) {
+      if (lightningBolt) {
+        scene.remove(lightningBolt);
+        lightningBolt = null;
+      }
+      
+      if (lightningFlash) {
+        scene.remove(lightningFlash);
+        lightningFlash = null;
+      }
+      
+      lightningActive = false;
+    }
+  }
+  
   function createPlayerCar() {
     // Tesla car model
     const car = new THREE.Group();
@@ -752,7 +995,8 @@
     <h1>TESLA OUTRUN</h1>
     <p>Drive your Tesla through the futuristic highway</p>
     <p>Controls: Left/Right arrows to steer, Up arrow to accelerate, Down arrow to brake</p>
-    <p>Press Space to jump and leave a smoke trail!</p>
+    <p>Press S for smoke effects (lasts randomly up to 10 seconds)</p>
+    <p>Press F to toggle the sun and L for lightning strikes!</p>
     <button id="start-button" on:click={startGame}>START GAME</button>
   </div>
 </div>
