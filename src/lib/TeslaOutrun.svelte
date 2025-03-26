@@ -405,10 +405,10 @@
     if (!gameActive) return;
     
     switch (event.key) {
-      case 'ArrowLeft':
+      case 'ArrowRight':
         if (lane > 0) lane--;
         break;
-      case 'ArrowRight':
+      case 'ArrowLeft':
         if (lane < 2) lane++;
         break;
       case 'ArrowUp':
