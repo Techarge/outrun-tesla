@@ -12,6 +12,7 @@
   let trees: { trunk: THREE.Mesh; foliage: THREE.Mesh; z: number }[] = [];
   let buildings: { mesh: THREE.Mesh; z: number }[] = [];
   let roadSegments: { mesh: THREE.Mesh; z: number }[] = [];
+  let roadStripes: { mesh: THREE.Mesh; z: number }[] = []; // Track road stripes separately for animation
   
   // Game state variables
   let score = 0;
@@ -32,6 +33,15 @@
   let lastObstacleTime = 0;
   let obstacleInterval = 2; // Seconds between obstacles
   let carsOvertaken = 0;
+  
+  // Lives system
+  let lives = 3;
+  let lifeIcons: THREE.Group[] = [];
+  
+  // High score system
+  let highScores: {name: string, score: number}[] = [];
+  let playerName = '';
+  let showHighScores = false;
   
   // Jump variables
   let isJumping = false;
@@ -128,11 +138,93 @@
     // Create player car
     createPlayerCar();
     
+    // Create life display
+    createLifeDisplay();
+    
+    // Load high scores
+    loadHighScores();
+    
     // Initialize clock
     clock = new THREE.Clock();
     
     // Start animation loop
     animate();
+  }
+  
+  function createLifeDisplay() {
+    // Clear existing life icons
+    lifeIcons.forEach(icon => scene.remove(icon));
+    lifeIcons = [];
+    
+    // Create new life icons (small Tesla cars)
+    for (let i = 0; i < lives; i++) {
+      const lifeIcon = new THREE.Group();
+      
+      // Car body (simplified)
+      const bodyGeometry = new THREE.BoxGeometry(0.5, 0.2, 1);
+      const bodyMaterial = new THREE.MeshStandardMaterial({ color: 0xe82127 }); // Tesla red
+      const carBody = new THREE.Mesh(bodyGeometry, bodyMaterial);
+      carBody.position.y = 0.2;
+      lifeIcon.add(carBody);
+      
+      // Position in top left corner of screen
+      // Convert from screen space to world space
+      const vector = new THREE.Vector3();
+      vector.set(-0.85 + i * 0.12, 0.9, 0.5); // x, y in normalized device coordinates (-1 to +1)
+      vector.unproject(camera);
+      
+      const dir = vector.sub(camera.position).normalize();
+      const distance = -camera.position.z / dir.z;
+      const pos = camera.position.clone().add(dir.multiplyScalar(distance));
+      
+      lifeIcon.position.copy(pos);
+      lifeIcon.lookAt(camera.position);
+      
+      scene.add(lifeIcon);
+      lifeIcons.push(lifeIcon);
+    }
+  }
+  
+  function updateLifeDisplay() {
+    // Remove all life icons
+    lifeIcons.forEach(icon => scene.remove(icon));
+    lifeIcons = [];
+    
+    // Recreate life icons based on current lives
+    createLifeDisplay();
+    
+    // Update the lives display in the DOM
+    if (typeof document !== 'undefined') {
+      const livesDisplay = document.getElementById('lives-display');
+      if (livesDisplay) livesDisplay.textContent = `Lives: ${lives}`;
+    }
+  }
+  
+  function loadHighScores() {
+    if (typeof localStorage !== 'undefined') {
+      const storedScores = localStorage.getItem('teslaOutrunHighScores');
+      if (storedScores) {
+        highScores = JSON.parse(storedScores);
+      }
+    }
+  }
+  
+  function saveHighScore(name: string, score: number) {
+    // Add new score
+    highScores.push({ name, score: Math.floor(score) });
+    
+    // Sort by score (descending)
+    highScores.sort((a, b) => b.score - a.score);
+    
+    // Keep only top 5
+    if (highScores.length > 5) {
+      highScores = highScores.slice(0, 5);
+    }
+    
+    // Save to localStorage
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('teslaOutrunHighScores', JSON.stringify(highScores));
+    }
   }
   
   function animate() {
@@ -223,6 +315,19 @@
       if (segment.z < cameraDistance - segmentLength / 2) {
         segment.z += roadLength;
         segment.mesh.position.z += roadLength;
+      }
+    }
+    
+    // Animate road stripes based on car speed
+    for (let i = 0; i < roadStripes.length; i++) {
+      const stripe = roadStripes[i];
+      stripe.z -= moveDistance;
+      stripe.mesh.position.z -= moveDistance;
+      
+      // If stripe is behind camera, move it to the front
+      if (stripe.z < cameraDistance - 20) {
+        stripe.z += roadLength;
+        stripe.mesh.position.z += roadLength;
       }
     }
     
@@ -357,9 +462,36 @@
         playerBack < obstacleFront
       ) {
         // Collision detected
-        gameOver();
+        handleCollision(obstacle);
         break;
       }
+    }
+  }
+  
+  function handleCollision(obstacle: THREE.Object3D) {
+    // Remove the obstacle
+    scene.remove(obstacle);
+    obstacles.splice(obstacles.indexOf(obstacle), 1);
+    
+    // Reduce lives
+    lives--;
+    updateLifeDisplay();
+    
+    // If no lives left, game over
+    if (lives <= 0) {
+      gameOver();
+    } else {
+      // Temporary invincibility and visual feedback
+      player.visible = false;
+      setTimeout(() => {
+        player.visible = true;
+        setTimeout(() => {
+          player.visible = false;
+          setTimeout(() => {
+            player.visible = true;
+          }, 200);
+        }, 200);
+      }, 200);
     }
   }
   
@@ -394,6 +526,9 @@
     if (typeof document !== 'undefined') {
       const startScreen = document.getElementById('start-screen');
       if (startScreen) startScreen.style.display = 'none';
+      
+      const highScoreScreen = document.getElementById('high-score-screen');
+      if (highScoreScreen) highScoreScreen.style.display = 'none';
     }
     gameActive = true;
     speed = 0;
@@ -401,15 +536,26 @@
     carsOvertaken = 0;
     elapsedTime = 0;
     lastObstacleTime = 0;
+    lives = 3; // Reset lives
+    showHighScores = false;
     clock.start();
+    
+    // Update displays
     if (typeof document !== 'undefined') {
       const overtakenDisplay = document.getElementById('overtaken-display');
       if (overtakenDisplay) overtakenDisplay.textContent = 'Cars Overtaken: 0';
+      
+      const livesDisplay = document.getElementById('lives-display');
+      if (livesDisplay) livesDisplay.textContent = `Lives: ${lives}`;
     }
+    
+    // Update life display
+    createLifeDisplay();
   }
   
   function gameOver() {
     gameActive = false;
+    
     if (typeof document !== 'undefined') {
       const finalScore = document.getElementById('final-score');
       if (finalScore) finalScore.textContent = Math.floor(score).toString();
@@ -417,8 +563,60 @@
       const finalOvertaken = document.getElementById('final-overtaken');
       if (finalOvertaken) finalOvertaken.textContent = carsOvertaken.toString();
       
+      // Show name input for high score
+      const nameInput = document.getElementById('player-name-input');
+      if (nameInput) {
+        (nameInput as HTMLInputElement).value = '';
+      }
+      
       const gameOverElement = document.getElementById('game-over');
       if (gameOverElement) gameOverElement.style.display = 'block';
+    }
+  }
+  
+  function submitHighScore() {
+    if (typeof document !== 'undefined') {
+      const nameInput = document.getElementById('player-name-input') as HTMLInputElement;
+      if (nameInput && nameInput.value.trim() !== '') {
+        playerName = nameInput.value.trim();
+        saveHighScore(playerName, score);
+        showHighScoreList();
+      }
+    }
+  }
+  
+  function showHighScoreList() {
+    showHighScores = true;
+    
+    if (typeof document !== 'undefined') {
+      // Hide game over screen
+      const gameOverElement = document.getElementById('game-over');
+      if (gameOverElement) gameOverElement.style.display = 'none';
+      
+      // Show high score screen
+      const highScoreScreen = document.getElementById('high-score-screen');
+      if (highScoreScreen) {
+        highScoreScreen.style.display = 'block';
+        
+        // Update high score list
+        const highScoreList = document.getElementById('high-score-list');
+        if (highScoreList) {
+          highScoreList.innerHTML = '';
+          
+          if (highScores.length === 0) {
+            highScoreList.innerHTML = '<li>No high scores yet!</li>';
+          } else {
+            highScores.forEach((entry, index) => {
+              const listItem = document.createElement('li');
+              listItem.textContent = `${index + 1}. ${entry.name}: ${entry.score}`;
+              if (entry.name === playerName && entry.score === Math.floor(score)) {
+                listItem.className = 'current-score';
+              }
+              highScoreList.appendChild(listItem);
+            });
+          }
+        }
+      }
     }
   }
   
@@ -437,6 +635,9 @@
     if (typeof document !== 'undefined') {
       const gameOverElement = document.getElementById('game-over');
       if (gameOverElement) gameOverElement.style.display = 'none';
+      
+      const highScoreScreen = document.getElementById('high-score-screen');
+      if (highScoreScreen) highScoreScreen.style.display = 'none';
     }
     
     // Start game
@@ -503,8 +704,32 @@
       createRoadSegment(i * segmentLength);
     }
     
+    // Create road stripes separately for better animation
+    createRoadStripes();
+    
     // Add some environment elements
     createEnvironment();
+  }
+  
+  function createRoadStripes() {
+    // Clear any existing stripes
+    roadStripes.forEach(stripe => road.remove(stripe.mesh));
+    roadStripes = [];
+    
+    // Create new stripes at regular intervals
+    const stripeSpacing = 20; // Distance between stripes
+    const stripeLength = 10;  // Length of each stripe
+    
+    for (let z = 0; z < roadLength; z += stripeSpacing) {
+      const stripeGeometry = new THREE.PlaneGeometry(0.5, stripeLength);
+      const stripeMaterial = new THREE.MeshStandardMaterial({ color: stripColor });
+      const stripe = new THREE.Mesh(stripeGeometry, stripeMaterial);
+      stripe.rotation.x = -Math.PI / 2;
+      stripe.position.set(0, 0.01, z);
+      stripe.receiveShadow = true;
+      road.add(stripe);
+      roadStripes.push({ mesh: stripe, z: z });
+    }
   }
   
   function createRoadSegment(z: number) {
@@ -518,16 +743,8 @@
     road.add(roadSegment);
     roadSegments.push({ mesh: roadSegment, z: z });
     
-    // Road stripes
-    if (z % 40 < 20) {  // Only add stripes to every other segment
-      const stripeGeometry = new THREE.PlaneGeometry(0.5, 10);
-      const stripeMaterial = new THREE.MeshStandardMaterial({ color: stripColor });
-      const stripe = new THREE.Mesh(stripeGeometry, stripeMaterial);
-      stripe.rotation.x = -Math.PI / 2;
-      stripe.position.set(0, 0.01, z + segmentLength / 2);
-      stripe.receiveShadow = true;
-      road.add(stripe);
-    }
+    // We'll handle road stripes separately in a dedicated function
+    // to allow for smoother animation based on car speed
     
     // Side grass (left)
     const grassLeftGeometry = new THREE.PlaneGeometry(100, segmentLength);
@@ -983,17 +1200,32 @@
   <div id="score-display">Score: 0</div>
   <div id="overtaken-display">Cars Overtaken: 0</div>
   <div id="speed-display">Speed: 0 km/h</div>
+  <div id="lives-display">Lives: 3</div>
   
   <div id="game-over">
     <h2>Game Over</h2>
     <p>Final Score: <span id="final-score">0</span></p>
     <p>Cars Overtaken: <span id="final-overtaken">0</span></p>
+    <div class="name-input-container">
+      <p>Enter your name for the high score:</p>
+      <input type="text" id="player-name-input" maxlength="15" placeholder="Your name">
+      <button id="submit-score-button" on:click={submitHighScore}>Submit Score</button>
+    </div>
     <button id="restart-button" on:click={restartGame}>Restart</button>
+  </div>
+  
+  <div id="high-score-screen">
+    <h2>High Scores</h2>
+    <ul id="high-score-list">
+      <!-- High scores will be populated here -->
+    </ul>
+    <button id="play-again-button" on:click={restartGame}>Play Again</button>
   </div>
   
   <div id="start-screen">
     <h1>TESLA OUTRUN</h1>
     <p>Drive your Tesla through the futuristic highway</p>
+    <p>You have 3 lives - try to get the highest score!</p>
     <p>Controls: Left/Right arrows to steer, Up arrow to accelerate, Down arrow to brake</p>
     <p>Press S for smoke effects (lasts randomly up to 10 seconds)</p>
     <p>Press F to toggle the sun and L for lightning strikes!</p>
@@ -1040,6 +1272,15 @@
     z-index: 10;
   }
   
+  #lives-display {
+    position: absolute;
+    top: 20px;
+    left: 20px;
+    color: white;
+    font-size: 24px;
+    z-index: 10;
+  }
+  
   #game-over {
     position: absolute;
     top: 50%;
@@ -1050,6 +1291,56 @@
     text-align: center;
     display: none;
     z-index: 10;
+    background-color: rgba(0, 0, 0, 0.8);
+    padding: 30px;
+    border-radius: 10px;
+  }
+  
+  #high-score-screen {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    color: white;
+    font-size: 24px;
+    text-align: center;
+    display: none;
+    z-index: 10;
+    background-color: rgba(0, 0, 0, 0.8);
+    padding: 30px;
+    border-radius: 10px;
+    min-width: 300px;
+  }
+  
+  #high-score-list {
+    list-style-type: none;
+    padding: 0;
+    margin: 20px 0;
+    text-align: left;
+  }
+  
+  #high-score-list li {
+    padding: 10px;
+    border-bottom: 1px solid #444;
+    font-size: 20px;
+  }
+  
+  #high-score-list li.current-score {
+    color: #e82127; /* Tesla red */
+    font-weight: bold;
+  }
+  
+  .name-input-container {
+    margin: 20px 0;
+  }
+  
+  #player-name-input {
+    padding: 10px;
+    font-size: 18px;
+    margin: 10px 0;
+    width: 80%;
+    border: none;
+    border-radius: 5px;
   }
   
   #start-screen {
@@ -1075,10 +1366,10 @@
   
   #start-screen p {
     font-size: 24px;
-    margin-bottom: 40px;
+    margin-bottom: 10px;
   }
   
-  #start-button, #restart-button {
+  #start-button, #restart-button, #submit-score-button, #play-again-button {
     padding: 15px 30px;
     font-size: 20px;
     background-color: #e82127; /* Tesla red */
@@ -1086,9 +1377,10 @@
     border: none;
     cursor: pointer;
     border-radius: 5px;
+    margin: 10px 0;
   }
   
-  #start-button:hover, #restart-button:hover {
+  #start-button:hover, #restart-button:hover, #submit-score-button:hover, #play-again-button:hover {
     background-color: #b81a1f;
   }
 </style>
