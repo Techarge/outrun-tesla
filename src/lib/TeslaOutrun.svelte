@@ -33,6 +33,19 @@
   let obstacleInterval = 2; // Seconds between obstacles
   let carsOvertaken = 0;
   
+  // Jump variables
+  let isJumping = false;
+  let jumpHeight = 0;
+  let jumpVelocity = 0;
+  let jumpGravity = 0.2;
+  let maxJumpHeight = 5;
+  let jumpInitialVelocity = 1;
+  
+  // Smoke particles
+  let smokeParticles: THREE.Mesh[] = [];
+  let lastSmokeTime = 0;
+  let smokeInterval = 0.05; // Seconds between smoke particles
+  
   // Colors
   const skyColor = 0x87CEEB; // Light blue sky
   const roadColor = 0x333333; // Dark gray road
@@ -738,7 +751,8 @@
   <div id="start-screen">
     <h1>TESLA OUTRUN</h1>
     <p>Drive your Tesla through the futuristic highway</p>
-    <p>Controls: Arrow keys to steer, Space to brake/accelerate</p>
+    <p>Controls: Left/Right arrows to steer, Up arrow to accelerate, Down arrow to brake</p>
+    <p>Press Space to jump and leave a smoke trail!</p>
     <button id="start-button" on:click={startGame}>START GAME</button>
   </div>
 </div>
