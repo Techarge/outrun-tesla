@@ -47,9 +47,14 @@
   let isJumping = false;
   let jumpHeight = 0;
   let jumpVelocity = 0;
-  let jumpGravity = 0.2;
-  let maxJumpHeight = 5;
-  let jumpInitialVelocity = 1;
+  let jumpGravity = 0.01; // Optimized gravity for parabolic arc
+  let maxJumpHeight = 5; // Double the car's height (1.5 units * 2)
+  let jumpInitialVelocity = 15; // Increased velocity for smoother ascent
+  let jumpDuration = 2; // Reduced duration for quicker jumps
+  let jumpStartTime = 0; // When the jump started
+  
+  // Game pause variables
+  let isPaused = false;
   
   // Smoke particles
   let smokeParticles: THREE.Mesh[] = [];
@@ -243,6 +248,11 @@
     // Update elapsed time
     elapsedTime += deltaTime;
     
+    // If game is paused, don't update anything
+    if (isPaused) {
+      return;
+    }
+    
     // Auto-accelerate if speed is low
     if (speed < maxSpeed * 0.4) {
       speed += acceleration;
@@ -258,6 +268,32 @@
     if (typeof document !== 'undefined') {
       const speedDisplay = document.getElementById('speed-display');
       if (speedDisplay) speedDisplay.textContent = `Speed: ${Math.round(speed)} km/h`;
+    }
+    
+    // Handle jumping
+    if (isJumping) {
+      // Apply jump physics with smoother parabolic arc
+      jumpHeight += jumpVelocity;
+      jumpVelocity -= jumpGravity;
+      
+      // Enforce maximum jump height
+      if (jumpHeight > maxJumpHeight) {
+        jumpHeight = maxJumpHeight;
+        jumpVelocity = 0; // Start falling when reaching max height
+      }
+      
+      // Check if jump is complete (returned to ground)
+      if (jumpHeight <= 0) {
+        isJumping = false;
+        jumpHeight = 0;
+        jumpVelocity = 0;
+      }
+      
+      // Update player's y position based on jump height
+      player.position.y = jumpHeight;
+    } else {
+      // Make sure player is on the ground
+      player.position.y = 0;
     }
     
     // Move the car towards target lane
@@ -439,11 +475,18 @@
   }
   
   function checkCollisions() {
+    // If jumping high enough, no collisions with ground obstacles
+    if (isJumping && jumpHeight > 2) {
+      return;
+    }
+    
     // Player bounding box
     const playerLeft = player.position.x - player.userData.width / 2;
     const playerRight = player.position.x + player.userData.width / 2;
     const playerFront = player.position.z + player.userData.height / 2;
     const playerBack = player.position.z - player.userData.height / 2;
+    const playerBottom = player.position.y;
+    const playerTop = player.position.y + 2; // Approximate height of car
     
     // Check collision with each obstacle
     for (let i = 0; i < obstacles.length; i++) {
@@ -453,13 +496,17 @@
       const obstacleRight = obstacle.position.x + obstacle.userData.width / 2;
       const obstacleFront = obstacle.position.z + obstacle.userData.height / 2;
       const obstacleBack = obstacle.position.z - obstacle.userData.height / 2;
+      const obstacleBottom = obstacle.position.y;
+      const obstacleTop = obstacle.position.y + 2; // Approximate height of obstacle
       
-      // Check for overlap
+      // Check for overlap in all dimensions
       if (
         playerRight > obstacleLeft &&
         playerLeft < obstacleRight &&
         playerFront > obstacleBack &&
-        playerBack < obstacleFront
+        playerBack < obstacleFront &&
+        playerTop > obstacleBottom &&
+        playerBottom < obstacleTop
       ) {
         // Collision detected
         handleCollision(obstacle);
@@ -477,22 +524,213 @@
     lives--;
     updateLifeDisplay();
     
+    // Create explosion at collision point
+    createExplosion(player.position.x, player.position.y, player.position.z);
+    
+    // Pause the game
+    isPaused = true;
+    
     // If no lives left, game over
     if (lives <= 0) {
       gameOver();
     } else {
-      // Temporary invincibility and visual feedback
-      player.visible = false;
-      setTimeout(() => {
-        player.visible = true;
-        setTimeout(() => {
-          player.visible = false;
-          setTimeout(() => {
-            player.visible = true;
-          }, 200);
-        }, 200);
-      }, 200);
+      // Show message to press space to continue
+      if (typeof document !== 'undefined') {
+        const pauseMessage = document.createElement('div');
+        pauseMessage.id = 'pause-message';
+        pauseMessage.textContent = 'Press SPACE to continue';
+        pauseMessage.style.position = 'absolute';
+        pauseMessage.style.top = '50%';
+        pauseMessage.style.left = '50%';
+        pauseMessage.style.transform = 'translate(-50%, -50%)';
+        pauseMessage.style.color = 'white';
+        pauseMessage.style.fontSize = '24px';
+        pauseMessage.style.fontWeight = 'bold';
+        pauseMessage.style.textShadow = '2px 2px 4px #000';
+        document.body.appendChild(pauseMessage);
+        
+        // Remove the message when the game is resumed
+        const checkPauseState = setInterval(() => {
+          if (!isPaused) {
+            const msg = document.getElementById('pause-message');
+            if (msg) document.body.removeChild(msg);
+            clearInterval(checkPauseState);
+          }
+        }, 100);
+      }
     }
+  }
+  
+  function createExplosion(x: number, y: number, z: number) {
+    // Create a group for the explosion
+    const explosion = new THREE.Group();
+    explosion.position.set(x, y, z);
+    scene.add(explosion);
+    
+    // Create fire particles
+    const particleCount = 50;
+    const fireColors = [0xff0000, 0xff5500, 0xff8800, 0xffaa00]; // Red to orange
+    
+    for (let i = 0; i < particleCount; i++) {
+      // Create a particle
+      const size = Math.random() * 0.5 + 0.5;
+      const geometry = new THREE.SphereGeometry(size, 8, 8);
+      const material = new THREE.MeshBasicMaterial({ 
+        color: fireColors[Math.floor(Math.random() * fireColors.length)],
+        transparent: true,
+        opacity: 0.8
+      });
+      
+      const particle = new THREE.Mesh(geometry, material);
+      
+      // Random position within explosion radius
+      const radius = Math.random() * 3;
+      const theta = Math.random() * Math.PI * 2;
+      const phi = Math.random() * Math.PI;
+      
+      particle.position.x = radius * Math.sin(phi) * Math.cos(theta);
+      particle.position.y = radius * Math.sin(phi) * Math.sin(theta);
+      particle.position.z = radius * Math.cos(phi);
+      
+      // Random velocity
+      particle.userData.velocity = new THREE.Vector3(
+        (Math.random() - 0.5) * 10,
+        (Math.random() - 0.5) * 10,
+        (Math.random() - 0.5) * 10
+      );
+      
+      // Add to explosion group
+      explosion.add(particle);
+    }
+    
+    // Add a point light for the explosion glow
+    const light = new THREE.PointLight(0xff5500, 5, 10);
+    light.position.set(0, 0, 0);
+    explosion.add(light);
+    
+    // Animate the explosion
+    let explosionTime = 0;
+    const explosionDuration = 2; // seconds
+    
+    const animateExplosion = () => {
+      explosionTime += 0.016; // Approximately 60fps
+      
+      // Update particles
+      explosion.children.forEach((child) => {
+        if (child instanceof THREE.Mesh) {
+          // Move particle based on velocity
+          child.position.add(child.userData.velocity.clone().multiplyScalar(0.016));
+          
+          // Apply "gravity" to make particles fall
+          child.userData.velocity.y -= 9.8 * 0.016;
+          
+          // Fade out particles
+          if (child.material instanceof THREE.MeshBasicMaterial) {
+            child.material.opacity = Math.max(0, 1 - (explosionTime / explosionDuration));
+          }
+        } else if (child instanceof THREE.PointLight) {
+          // Fade out light
+          child.intensity = Math.max(0, 5 * (1 - (explosionTime / (explosionDuration * 0.5))));
+        }
+      });
+      
+      // Continue animation until duration is reached
+      if (explosionTime < explosionDuration) {
+        requestAnimationFrame(animateExplosion);
+      } else {
+        // Remove explosion from scene
+        scene.remove(explosion);
+      }
+    };
+    
+    // Start animation
+    animateExplosion();
+    
+    // Create firework effects
+    setTimeout(() => createFireworks(x, y, z), 200);
+  }
+  
+  function createFireworks(x: number, y: number, z: number) {
+    // Create firework particles
+    const particleCount = 30;
+    const fireworkColors = [0xff0000, 0x00ff00, 0x0000ff, 0xffff00, 0xff00ff, 0x00ffff];
+    
+    // Create a group for the firework
+    const firework = new THREE.Group();
+    firework.position.set(x, y + 5, z); // Start above the explosion
+    scene.add(firework);
+    
+    for (let i = 0; i < particleCount; i++) {
+      // Create a particle
+      const geometry = new THREE.SphereGeometry(0.2, 8, 8);
+      const material = new THREE.MeshBasicMaterial({ 
+        color: fireworkColors[Math.floor(Math.random() * fireworkColors.length)],
+        transparent: true,
+        opacity: 1
+      });
+      
+      const particle = new THREE.Mesh(geometry, material);
+      
+      // All particles start at center
+      particle.position.set(0, 0, 0);
+      
+      // Random velocity in all directions
+      const speed = Math.random() * 5 + 5;
+      const angle = Math.random() * Math.PI * 2;
+      const elevation = Math.random() * Math.PI - Math.PI/2;
+      
+      particle.userData.velocity = new THREE.Vector3(
+        speed * Math.cos(angle) * Math.cos(elevation),
+        speed * Math.sin(elevation),
+        speed * Math.sin(angle) * Math.cos(elevation)
+      );
+      
+      // Add to firework group
+      firework.add(particle);
+    }
+    
+    // Add a point light for the firework glow
+    const light = new THREE.PointLight(fireworkColors[Math.floor(Math.random() * fireworkColors.length)], 2, 10);
+    light.position.set(0, 0, 0);
+    firework.add(light);
+    
+    // Animate the firework
+    let fireworkTime = 0;
+    const fireworkDuration = 1.5; // seconds
+    
+    const animateFirework = () => {
+      fireworkTime += 0.016; // Approximately 60fps
+      
+      // Update particles
+      firework.children.forEach((child) => {
+        if (child instanceof THREE.Mesh) {
+          // Move particle based on velocity
+          child.position.add(child.userData.velocity.clone().multiplyScalar(0.016));
+          
+          // Apply gravity
+          child.userData.velocity.y -= 9.8 * 0.016;
+          
+          // Fade out particles
+          if (child.material instanceof THREE.MeshBasicMaterial) {
+            child.material.opacity = Math.max(0, 1 - (fireworkTime / fireworkDuration));
+          }
+        } else if (child instanceof THREE.PointLight) {
+          // Fade out light
+          child.intensity = Math.max(0, 2 * (1 - (fireworkTime / (fireworkDuration * 0.5))));
+        }
+      });
+      
+      // Continue animation until duration is reached
+      if (fireworkTime < fireworkDuration) {
+        requestAnimationFrame(animateFirework);
+      } else {
+        // Remove firework from scene
+        scene.remove(firework);
+      }
+    };
+    
+    // Start animation
+    animateFirework();
   }
   
   function updateScore(deltaTime: number) {
@@ -645,7 +883,17 @@
   }
   
   function onKeyDown(event: KeyboardEvent) {
-    if (!gameActive) return;
+    // If game is over, don't process any keys
+    if (!gameActive && !isPaused) return;
+    
+    // If game is paused and space is pressed, resume the game
+    if (isPaused && event.key === ' ') {
+      isPaused = false;
+      return;
+    }
+    
+    // Don't process movement keys if the game is paused
+    if (isPaused) return;
     
     switch (event.key) {
       case 'ArrowRight':
@@ -658,8 +906,28 @@
         speed = Math.min(maxSpeed, speed + acceleration * 5);
         break;
       case 'ArrowDown':
-      case ' ':
         speed = Math.max(0, speed - brakeForce * 5);
+        break;
+      case ' ':
+        // Space bar for braking
+        speed = Math.max(0, speed - brakeForce * 5);
+        // Also allow space to jump
+        if (!isJumping) {
+          isJumping = true;
+          jumpVelocity = jumpInitialVelocity;
+          jumpHeight = 0; // Start from the ground
+          jumpStartTime = elapsedTime;
+        }
+        break;
+      case 'j':
+      case 'J':
+        // Jump functionality
+        if (!isJumping) {
+          isJumping = true;
+          jumpVelocity = jumpInitialVelocity;
+          jumpHeight = 0; // Start from the ground
+          jumpStartTime = elapsedTime;
+        }
         break;
       case 's':
       case 'S':
